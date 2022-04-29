@@ -57,3 +57,21 @@ pip freeze > requirements.txt
 ```
 python -m pip install -r requirements.txt
 ```
+### Nuitkaのインストール方法
+`※余計なプラグインをパッケージングしないように仮想環境へインストールする。`
+```
+python -m pip install nuitka zstandard
+```
+
+### Nuitka実行時に含まれるパッケージ一覧を表示
+`※リストに表示されないプラグインは、仮想環境または外部環境内にパッケージがインストールされていない可能性があるため、pipを実行`
+```
+python -m nuitka --plugin-list
+```
+
+### 
+
+### Nuitkaの実行コマンド
+```
+nuitka --mingw64 --follow-imports --onefile (エントリーポイントにしたい Python ファイル).py
+```

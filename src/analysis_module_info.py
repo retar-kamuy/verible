@@ -150,36 +150,28 @@ class AnalysisModuleInfo:
         return _top_module
 
     def hierarchy(self, modules_info: dict[str, verible_verilog_syntax.SyntaxData], top_modules: list[str]) -> None:
-        #def transform(module_info)
+        def _hierarchy(current_name, modules_info) -> InstanceInfo:
+            if current_name in modules_info:
+                children_module = modules_info[current_name]['instances']['type']
+                if children_module:
+                    children = [
+                        _hierarchy(child_name, modules_info)
+                        for child_name in children_module
+                    ]
+                    return InstanceInfo(current_name, module_info=modules_info[current_name], children=children)
+                else:
+                    return InstanceInfo(current_name, module_info=modules_info[current_name])
+            else:
+                return InstanceInfo(current_name)
+
         for top_module in top_modules:
-            children_module = []
-            children_module.insert(0, modules_info[top_module]['name'])
-
-            module_info = modules_info[children_module.pop(0)]
-            print(module_info)
-
-            if not module_info:
-                return None
-            if module_info['instances']['type']:
-                children = [child_type for child_type in module_info['instances']['type']]
-                children_node = InstanceInfo(children[0], module_info=None, parent=None, children=None)
-                current_node = InstanceInfo(module_info['name'], module_info, parent=None, children=[children_node])
+            if top_module in modules_info:
+                current_node = _hierarchy(top_module, modules_info)
+                print(f'top_module: {top_module}')
                 current_node.RenderTree()
-
-            #while children_module:
-            #    current_node = InstanceInfo(modules_info[top_module]['name'], modules_info[top_module], parent=None)
-            #    module_info = modules_info[children_module.pop(0)]
-            #    if not module_info:
-            #        continue
-            #    print(module_info)
-            #    if not module_info['instances']:
-            #        children_module = module_info['instances']['name'] + children_module
-            #        child_nodeInstanceInfo(modules_info[top_module]['name'], modules_info[top_module], parent=None)
-
-    def RenderTree(self, node: InstanceInfo) -> None:
-        for pre, _, _node in anytree.RenderTree(node):
-            treestr = u'%s%s' % (pre, _node.name)
-            print(treestr.ljust(8), node.module_info['name'])
+            else:
+                current_node = InstanceInfo(top_module)
+                current_node.RenderTree()
 
 def setting_verible_path() -> str:
     current_dir = pathlib.Path(__file__).resolve().parent.joinpath('..', 'verible')
@@ -188,12 +180,9 @@ def setting_verible_path() -> str:
 
     return str(current_dir / os_dir)
 
-
-
 def main():
     if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} PATH_TO_VERIBLE_VERILOG_SYNTAX ' +
-              'VERILOG_FILE [VERILOG_FILE [...]]')
+        print(f'Usage: {sys.argv[0]} VERILOG_FILE [VERILOG_FILE [...]]')
         return 1
   
     #parser_path = sys.argv[1]

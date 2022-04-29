@@ -41,22 +41,47 @@ from typing import Any, Optional
 
 import verible_verilog_syntax
 
-class InstanceInfo(anytree.NodeMixin):
-    def __init__(self, name: str, module_info: Optional[verible_verilog_syntax.SyntaxData] = None,
-        parent: Optional['InstanceInfo'] = None, children: Optional[list['InstanceInfo']] = None):
-        super(InstanceInfo, self).__init__()
+class _InstanceBase(anytree.NodeMixin):
+    def __init__(self, name: str, parent: Optional['_InstanceBase'] = None):
+        super(_InstanceBase, self).__init__()
         self.name = name
-        self.module_info = module_info
         self.parent = parent
-        if children:
-            self.children = children
+
+class BranchInstance(_InstanceBase):
+    def __init__(self, name: str, module_info: Optional[verible_verilog_syntax.SyntaxData] = None,
+        parent: Optional['_InstanceBase'] = None, children: Optional[list['_InstanceBase']] = None):
+        super().__init__(name, parent)
+        self.module_info = module_info
+        self.children = children if children is not None else []
 
     def RenderTree(self) -> None:
         for pre, _, node in anytree.RenderTree(self):
             treestr = u'%s%s' % (pre, node.name)
-            print(treestr.ljust(8), self.module_info['name'])
+            instance_type = node.module_info['name'] if node.__class__.__name__ != 'UnfoundedInstance' else '-'
+            print(f'{treestr.ljust(8)} ({instance_type}): {node.__class__.__name__}')
+
+class RootInstance(BranchInstance):
+    def __init__(self, name: str, module_info: Optional[verible_verilog_syntax.SyntaxData] = None,
+        children: Optional[list['_InstanceBase']] = None):
+        super().__init__(name, module_info, None, children)
+
+class LeafInstance(_InstanceBase):
+    def __init__(self, name: str, module_info: Optional[verible_verilog_syntax.SyntaxData] = None,
+        parent: Optional['_InstanceBase'] = None):
+        super().__init__(name, parent)
+        self.module_info = module_info
+
+class UnfoundedInstance(_InstanceBase):
+    def __init__(self, name: str, parent: Optional['_InstanceBase'] = None):
+        self.parent = parent
+        super().__init__(name, parent)
 
 class AnalysisModuleInfo:
+    def __init__(self, syntax_data: dict[str, verible_verilog_syntax.SyntaxData]):
+        self.modules_info = {}
+        for file_path, file_data in syntax_data.items():
+            self.modules_info = self.process_file_data(file_path, file_data)
+
     def process_file_data(self, path: str, data: verible_verilog_syntax.SyntaxData) -> dict[str, dict[str, Any]]:
         '''Print information about modules found in SystemVerilog file.
     
@@ -135,43 +160,57 @@ class AnalysisModuleInfo:
             modules_info[module_info['name']] = module_info
         return modules_info
 
-    def top_module(self, modules_info: dict[str, dict[str, Any]]) -> list[str]:
-        _top_module = []
+    def _top_module(self) -> list[str]:
+        name = []
 
-        for child_name, child_info in modules_info.items():
+        for child_name, child_info in self.modules_info.items():
             parents_name = []
-            for parent_name, parent_info in modules_info.items():
+            for parent_name, parent_info in self.modules_info.items():
                 if child_name != parent_name:
                     if (child_name in parent_info['instances']['type']):
                         parents_name.append(parent_name)
 
             if len(parents_name) == 0:
-                _top_module.append(child_name)
-        return _top_module
+                name.append(child_name)
+        return name
 
-    def hierarchy(self, modules_info: dict[str, verible_verilog_syntax.SyntaxData], top_modules: list[str]) -> None:
-        def _hierarchy(current_name, modules_info) -> InstanceInfo:
-            if current_name in modules_info:
-                children_module = modules_info[current_name]['instances']['type']
-                if children_module:
+    def _hierarchy(self, top_modules: list[str]) -> dict[str, RootInstance]:
+        def hierarchy(current_name: str) -> Any:
+            if current_name in self.modules_info:
+                current_module = self.modules_info[current_name]
+                if current_module['instances']['type']:
                     children = [
-                        _hierarchy(child_name, modules_info)
-                        for child_name in children_module
+                        hierarchy(child)
+                        for child in current_module['instances']['type']
                     ]
-                    return InstanceInfo(current_name, module_info=modules_info[current_name], children=children)
+                    return BranchInstance(current_name, current_module, children=children)
                 else:
-                    return InstanceInfo(current_name, module_info=modules_info[current_name])
+                    return LeafInstance(current_name, current_module)
             else:
-                return InstanceInfo(current_name)
+                return UnfoundedInstance(current_name)
 
+        data = {}
         for top_module in top_modules:
-            if top_module in modules_info:
-                current_node = _hierarchy(top_module, modules_info)
-                print(f'top_module: {top_module}')
-                current_node.RenderTree()
+            if top_module in self.modules_info:
+                current_module = self.modules_info[top_module]
+                if current_module['instances']['type']:
+                    children = [
+                        hierarchy(child)
+                        for child in current_module['instances']['type']
+                    ]
+                    data[top_module] = RootInstance(top_module, current_module, children)
+                else:
+                    data[top_module] = RootInstance(top_module, current_module, children=None)
             else:
-                current_node = InstanceInfo(top_module)
-                current_node.RenderTree()
+                data[top_module] = UnfoundedInstance(top_module)
+        return data
+
+    def parse_top_module(self) -> list[str]:
+        return self._top_module()
+
+    def parse_hierarchy(self) -> dict[str, RootInstance]:
+        top_modules = self._top_module()
+        return self._hierarchy(top_modules)
 
 def setting_verible_path() -> str:
     current_dir = pathlib.Path(__file__).resolve().parent.joinpath('..', 'verible')
@@ -184,22 +223,15 @@ def main():
     if len(sys.argv) < 2:
         print(f'Usage: {sys.argv[0]} VERILOG_FILE [VERILOG_FILE [...]]')
         return 1
-  
-    #parser_path = sys.argv[1]
+
     parser_path = setting_verible_path()
     files = sys.argv[1:]
-  
-    parser = verible_verilog_syntax.VeribleVerilogSyntax(executable=parser_path)
-    data = parser.parse_files(files)
-  
-    analyzer = AnalysisModuleInfo()
-    modules_info = {}
-    for file_path, file_data in data.items():
-        modules_info = analyzer.process_file_data(file_path, file_data)
 
-    top_modules = analyzer.top_module(modules_info)
-    print(top_modules)
-    analyzer.hierarchy(modules_info, top_modules)
+    parser = verible_verilog_syntax.VeribleVerilogSyntax(executable=parser_path)
+    analyzer = AnalysisModuleInfo( parser.parse_files(files) )
+    data = analyzer.parse_hierarchy()
+    for instance_name, instance_data in data.items():
+        instance_data.RenderTree()
 
 if __name__ == '__main__':
     sys.exit(main())
